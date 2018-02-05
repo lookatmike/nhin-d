@@ -18,10 +18,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.IO;
+using System.IO.Compression;
 
 using Xunit;
-using Ionic.Zip;
-using Ionic.Zlib;
 
 using Health.Direct.Xdm;
 using Health.Direct.Xd.Tests;
@@ -35,9 +34,9 @@ namespace Health.Direct.Xdm.Tests
         [Fact]
         public void XdmHasMetadataFile()
         {
-            using (ZipFile z = XDMZipPackager.Default.Package(Examples.TestPackage))
+            using (ZipArchive z = XDMZipPackager.Default.Package(Examples.TestPackage))
             {
-                var entries = z.Entries.Select(e => e.FileName);
+                var entries = z.Entries.Select(e => e.FullName);
                 Assert.Contains(String.Format("{0}/{1}/{2}", XDMStandard.MainDirectory, XDMStandard.DefaultSubmissionSet, XDMStandard.MetadataFilename), entries);
             }
         }
@@ -45,9 +44,9 @@ namespace Health.Direct.Xdm.Tests
         [Fact]
         public void XdmHasReadme()
         {
-            using (ZipFile z = XDMZipPackager.Default.Package(Examples.TestPackage))
+            using (ZipArchive z = XDMZipPackager.Default.Package(Examples.TestPackage))
             {
-                var entries = z.Entries.Where(e => e.FileName == XDMStandard.ReadmeFilename);
+                var entries = z.Entries.Where(e => e.FullName == XDMStandard.ReadmeFilename);
                 Assert.Equal(1, entries.Count());
             }
         }
@@ -55,9 +54,9 @@ namespace Health.Direct.Xdm.Tests
         [Fact]
         public void XdmHasIndex()
         {
-            using (ZipFile z = XDMZipPackager.Default.Package(Examples.TestPackage))
+            using (ZipArchive z = XDMZipPackager.Default.Package(Examples.TestPackage))
             {
-                var entries = z.Entries.Where(e => e.FileName == XDMStandard.IndexHtmFile);
+                var entries = z.Entries.Where(e => e.FullName == XDMStandard.IndexHtmFile);
                 Assert.Equal(1, entries.Count());
             }
         }
@@ -65,10 +64,10 @@ namespace Health.Direct.Xdm.Tests
         [Fact]
         public void XdmHasDocumentFile()
         {
-            using (ZipFile z = XDMZipPackager.Default.Package(Examples.TestPackage))
+            using (ZipArchive z = XDMZipPackager.Default.Package(Examples.TestPackage))
             {
                 string fileName = String.Format("{0}/{1}/DOC001", XDMStandard.MainDirectory, XDMStandard.DefaultSubmissionSet);
-                var entries = z.Entries.Where(e => e.FileName == fileName );
+                var entries = z.Entries.Where(e => e.FullName == fileName );
                 Assert.Equal(1, entries.Count());
             }
         }
@@ -76,20 +75,17 @@ namespace Health.Direct.Xdm.Tests
         [Fact]
         public void XdmDocumentFileCorrect()
         {
-            using (ZipFile z = XDMZipPackager.Default.Package(Examples.TestPackage))
+            using (ZipArchive z = XDMZipPackager.Default.Package(Examples.TestPackage))
             {
-                z.Save("xdm.zip");
                 string docName = String.Format("{0}/{1}/DOC001", XDMStandard.MainDirectory, XDMStandard.DefaultSubmissionSet);
-                var entries = z.Entries.Where(e => e.FileName == docName);
+                var entries = z.Entries.Where(e => e.FullName == docName);
                 Assert.Equal(1, entries.Count());
-                ZipEntry entry = entries.First();
+                ZipArchiveEntry entry = entries.First();
                 Assert.NotNull(entry);
-                using (MemoryStream docStream = new MemoryStream())
+                using (Stream docStream = entry.Open())
                 {
-                    entry.Extract(docStream);
                     UTF8Encoding utf8 = new UTF8Encoding();
-                    docStream.Seek(0, SeekOrigin.Begin);
-                    string docText = utf8.GetString(docStream.ToArray());
+                    string docText = utf8.GetString(docStream.ReadAllBytes());
                     Assert.Equal(Examples.TestDocument.DocumentString, docText);
                 }
             }
@@ -100,9 +96,8 @@ namespace Health.Direct.Xdm.Tests
         {
             XDMZipPackager p = XDMZipPackager.Default;
             DocumentPackage package;
-            using (ZipFile z = p.Package(Examples.TestPackage))
+            using (ZipArchive z = p.Package(Examples.TestPackage))
             {
-                z.Save("xdm.zip");
                 package = p.Unpackage(z);
             }
             Assert.NotNull(package);
@@ -113,9 +108,8 @@ namespace Health.Direct.Xdm.Tests
         {
             XDMZipPackager p = XDMZipPackager.Default;
             DocumentPackage package;
-            using (ZipFile z = p.Package(Examples.TestPackage))
+            using (ZipArchive z = p.Package(Examples.TestPackage))
             {
-                z.Save("xdm.zip");
                 package = p.Unpackage(z);
             }
             //not a perfect equality test but it should do....
@@ -129,9 +123,8 @@ namespace Health.Direct.Xdm.Tests
         {
             XDMZipPackager p = XDMZipPackager.Default;
             DocumentPackage package;
-            using (ZipFile z = p.Package(Examples.TestPackage))
+            using (ZipArchive z = p.Package(Examples.TestPackage))
             {
-                z.Save("xdm.zip");
                 package = p.Unpackage(z);
             }
             //not a perfect equality test but it should do....
