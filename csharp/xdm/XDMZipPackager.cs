@@ -15,18 +15,18 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 */
 using System;
 using System.Collections.Generic;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Xml.Linq;
 
 using Health.Direct.Common.Metadata;
 using Health.Direct.Xd;
-using Ionic.Zip;
 using System.IO;
 
 namespace Health.Direct.Xdm
 {
-    public class XDMZipPackager : IPackager<ZipFile>
+    public class XDMZipPackager : IPackager<ZipArchive>
     {
         // Use Default
         private XDMZipPackager() { }
@@ -48,19 +48,19 @@ namespace Health.Direct.Xdm
         /// <summary>
         /// Unpackages an XDM-encoded zip file
         /// </summary>
-        public DocumentPackage Unpackage(ZipFile z)
+        public DocumentPackage Unpackage(ZipArchive z)
         {
             DocumentPackage package;
             package = ReadMetadata(z);
             return package;
         }
 
-        private DocumentPackage ReadMetadata(ZipFile z)
+        private DocumentPackage ReadMetadata(ZipArchive z)
         {
-            ZipEntry metadataEntry = LocateMetadataFile(z);
+            ZipArchiveEntry metadataEntry = LocateMetadataFile(z);
             XDocument metadataDoc = ExtractMetadataFile(metadataEntry);
             DocumentPackage package = XDMetadataConsumer.Consume(metadataDoc.Root);
-            string[] dirParts = metadataEntry.FileName.Split('/');
+            string[] dirParts = metadataEntry.FullName.Split('/');
             string submissionSetDir = String.Format("{0}/{1}", dirParts[0], dirParts[1]);
             foreach (DocumentMetadata doc in package.Documents)
             {
@@ -72,25 +72,21 @@ namespace Health.Direct.Xdm
             return package;
         }
 
-        private byte[] ExtractDocumentBytes(ZipFile z, string path)
+        private byte[] ExtractDocumentBytes(ZipArchive z, string path)
         {
-            ZipEntry docEntry = z[path];
+            ZipArchiveEntry docEntry = z.GetEntry(path);
             if (docEntry == null) throw new XdmException(XdmError.FileNotFound, String.Format("File {0} was not located in the archive", path));
-            using (MemoryStream stream = new MemoryStream())
+            using (Stream stream = docEntry.Open())
             {
-                docEntry.Extract(stream);
-                stream.Seek(0, SeekOrigin.Begin);
                 return stream.ReadAllBytes();
             }
         }
 
-        private XDocument ExtractMetadataFile(ZipEntry e)
+        private XDocument ExtractMetadataFile(ZipArchiveEntry e)
         {
             XDocument metadataDoc;
-            using (MemoryStream docStream = new MemoryStream())
+            using (Stream docStream = e.Open())
             {
-                e.Extract(docStream);
-                docStream.Seek(0, SeekOrigin.Begin);
                 using (TextReader reader = new StreamReader(docStream))
                 {
                     metadataDoc = XDocument.Load(reader);
@@ -100,12 +96,12 @@ namespace Health.Direct.Xdm
         }
 
 
-        private ZipEntry LocateMetadataFile(ZipFile z)
+        private ZipArchiveEntry LocateMetadataFile(ZipArchive z)
         {
-            IEnumerable<ZipEntry> subFiles = z.Entries.Where(e => e.FileName.StartsWith(XDMStandard.MainDirectory));
-            IEnumerable<ZipEntry> metadataFiles = subFiles
-                .Where(e => e.FileName.EndsWith(XDMStandard.MetadataFilename) &&
-                    e.FileName.Split('/').Count() == 3);
+            IEnumerable<ZipArchiveEntry> subFiles = z.Entries.Where(e => e.FullName.StartsWith(XDMStandard.MainDirectory));
+            IEnumerable<ZipArchiveEntry> metadataFiles = subFiles
+                .Where(e => e.FullName.EndsWith(XDMStandard.MetadataFilename) &&
+                    e.FullName.Split('/').Count() == 3);
             if (metadataFiles.Count() == 0) throw new XdmException(XdmError.NoMetadataFile);
             if (metadataFiles.Count() > 1) throw new NotImplementedException("Multiple submission sets not supported");
             return metadataFiles.First();
@@ -116,34 +112,46 @@ namespace Health.Direct.Xdm
         /// <summary>
         /// Packages a <see cref="DocumentPackage"/> as an XDM zip file
         /// </summary>
-        public ZipFile Package(DocumentPackage package)
+        public ZipArchive Package(DocumentPackage package)
         {
-            ZipFile z = new ZipFile();
-
-            AddDocuments(package, z); // Alters URI by side effect
-            AddManifests(package, z);
-            AddMetadata(package, z);
-
-            return z;
+            // ZipArchive can't do any read operations while in Create mode, so we have to open a stream,
+            // have a ZipArchive create into that stream, then reset the stream and point a new ZipArchive (in read mode) at it.
+            MemoryStream stream = new MemoryStream();
+            Package(package, stream);
+            stream.Seek(0, SeekOrigin.Begin);
+            return new ZipArchive(stream, ZipArchiveMode.Read, false);
         }
 
-        private void AddManifests(DocumentPackage package, ZipFile z)
+        /// <summary>
+        /// Packages a <see cref="DocumentPackage"/> as an XDM and writes it to the given stream.
+        /// </summary>
+        public void Package(DocumentPackage package, Stream stream)
+        {
+            using (ZipArchive z = new ZipArchive(stream, ZipArchiveMode.Create, true))
+            {
+                AddDocuments(package, z); // Alters URI by side effect
+                AddManifests(package, z);
+                AddMetadata(package, z);
+            }
+        }
+
+        private void AddManifests(DocumentPackage package, ZipArchive z)
         {
             AddIndex(package, z);
             AddReadme(z);
         }
 
-        private void AddReadme(ZipFile z)
+        private void AddReadme(ZipArchive z)
         {
-            z.AddEntry(XDMStandard.ReadmeFilename, XDMStandard.ReadmeFileString);
+            AddZipArchiveEntry(z, XDMStandard.ReadmeFilename, XDMStandard.ReadmeFileString);
         }
 
-        private void AddIndex(DocumentPackage package, ZipFile z)
+        private void AddIndex(DocumentPackage package, ZipArchive z)
         {
-            z.AddEntry(XDMStandard.IndexHtmFile, GenerateIndexFile(package));
+            AddZipArchiveEntry(z, XDMStandard.IndexHtmFile, GenerateIndexFile(package));
         }
 
-        private void AddMetadata(DocumentPackage package, ZipFile z)
+        private void AddMetadata(DocumentPackage package, ZipArchive z)
         {
             
             StringBuilder sb = new StringBuilder();
@@ -152,10 +160,10 @@ namespace Health.Direct.Xdm
                 package.Generate().Save(w);
             }
 
-            z.AddEntry(XDMStandard.DefaultMetadataFilePath, sb.ToString());
+            AddZipArchiveEntry(z, XDMStandard.DefaultMetadataFilePath, sb.ToString());
         }
 
-        private void AddDocuments(DocumentPackage package, ZipFile z)
+        private void AddDocuments(DocumentPackage package, ZipArchive z)
         {
             int i = 1;
             foreach (DocumentMetadata doc in package.Documents)
@@ -165,7 +173,7 @@ namespace Health.Direct.Xdm
                 string name = XDMStandard.DocPrefix + suffix;
                 string path = String.Format("{0}/{1}/{2}", XDMStandard.MainDirectory, XDMStandard.DefaultSubmissionSet, name);
                 doc.Uri = name;
-                z.AddEntry(path, doc.DocumentBytes);
+                AddZipArchiveEntry(z, path, doc.DocumentBytes);
             }
         }
 
@@ -187,7 +195,35 @@ namespace Health.Direct.Xdm
             return index.ToString();
         }
 
+        /// <summary>
+        /// Adds data as an entry to a <see cref="ZipArchive"/>.
+        /// </summary>
+        /// <param name="zip">The <see cref="ZipArchive"/> to add to.</param>
+        /// <param name="path">The path, relative to the root of the archive, to add the entry.</param>
+        /// <param name="content">The content of the new entry.</param>
+        private void AddZipArchiveEntry(ZipArchive zip, string path, byte[] content)
+        {
+            var entry = zip.CreateEntry(path);
+            using (var stream = entry.Open())
+            {
+                stream.Write(content, 0, content.Length);
+            }
+        }
 
-
+        /// <summary>
+        /// Adds text as an entry to a <see cref="ZipArchive"/>.
+        /// </summary>
+        /// <param name="zip">The <see cref="ZipArchive"/> to add to.</param>
+        /// <param name="path">The path, relative to the root of the archive, to add the entry.</param>
+        /// <param name="text">The content of the new entry.</param>
+        private void AddZipArchiveEntry(ZipArchive zip, string path, string text)
+        {
+            var entry = zip.CreateEntry(path);
+            using (var stream = entry.Open())
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(text);
+            }
+        }
     }
 }
