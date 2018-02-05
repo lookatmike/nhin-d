@@ -1,4 +1,5 @@
 using Health.Direct.Common.Metadata;
+using System.IO;
 
 namespace Health.Direct.Xdm
 {
@@ -17,5 +18,10 @@ namespace Health.Direct.Xdm
         /// Packages a <see cref="DocumentPackage"/> as an XDM of type <typeparamref name="T"/>
         /// </summary>
         T Package(DocumentPackage package);
+
+        /// <summary>
+        /// Packages a <see cref="DocumentPackage"/> as an XDM and writes it to the given stream.
+        /// </summary>
+        void Package(DocumentPackage package, Stream stream);
     }
 }
